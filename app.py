@@ -152,39 +152,54 @@ threading.Thread(target=loop,daemon=True).start()
 @app.route("/", methods=["GET","POST"])
 def login():
 
+    error = ""
+
     if request.method=="POST":
         email=request.form.get("email")
         pwd=request.form.get("pwd")
 
-        ok=login_cls(email,pwd)
+        if not email or not pwd:
+            error = "Veuillez entrer email et mot de passe"
 
-        if ok:
-            session["login"]=True
-            return redirect("/dashboard")
         else:
-            return "<h2 style='color:red'>Erreur connexion CLS</h2>"
+            ok = login_cls(email,pwd)
 
-    return """
+            if ok:
+                session["login"]=True
+                return redirect("/dashboard")
+            else:
+                error = "Email ou mot de passe CLS incorrect"
+
+    return f"""
     <html>
     <head>
     <title>ECOLOGGING Secure</title>
     <style>
-    body{background:#020617;color:white;text-align:center;font-family:Arial}
-    input{padding:12px;margin:8px;width:260px;border-radius:10px;border:none}
-    button{padding:12px 40px;background:#00ffe1;border:none;border-radius:10px}
+    body{{background:#020617;color:white;text-align:center;font-family:Arial}}
+    .box{{margin-top:120px}}
+    input{{padding:14px;margin:10px;width:280px;border-radius:10px;border:none}}
+    button{{padding:14px 40px;background:#00ffe1;border:none;border-radius:12px;font-size:16px}}
+    .error{{color:#ff4d4d;font-size:18px;margin-top:10px}}
     </style>
     </head>
+
     <body>
+    <div class="box">
     <h1>🛰️ ECOLOGGING SECURE ACCESS</h1>
     <h3>Connexion satellite CLS</h3>
+
     <form method="post">
     <input name="email" placeholder="CLS Email"><br>
     <input name="pwd" type="password" placeholder="CLS Password"><br>
-    <button>Connexion sécurisée</button>
+    <button>Connexion</button>
     </form>
+
+    <div class="error">{error}</div>
+    </div>
     </body>
     </html>
     """
+
 
 # ================= DASHBOARD =================
 @app.route("/dashboard")
