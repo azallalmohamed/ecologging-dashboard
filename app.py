@@ -237,10 +237,14 @@ def dashboard():
         df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date")
 
-        # 🔵 FILTRE 24H SEULEMENT
-        now = pd.Timestamp.utcnow()
+       # convertir date sans timezone
+        df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+        
+        now = pd.Timestamp.now()   # locale simple
         last24 = now - pd.Timedelta(hours=24)
+        
         df = df[df["date"] >= last24]
+
 
         if len(df)==0:
             return "<h2 style='color:white;text-align:center'>Pas encore de données 24h</h2>"
