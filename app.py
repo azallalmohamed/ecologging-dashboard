@@ -263,7 +263,7 @@ def dashboard():
         fig.update_layout(
             template="plotly_dark",
             height=700,
-            title=f"Temps réel + dernières 24h — Device {DEVICE}",
+            title=f"ECOLOGGING Station — ID: {DEVICE}",
             showlegend=False
         )
 
@@ -286,8 +286,7 @@ def dashboard():
 
     <body>
 
-    <h1>🛰️ ECOLOGGING - INRAe</h1>
-    <h3>Temps réel + dernières 24h</h3>
+    <h1>🛰️ ECOLOGGING Station - INRAe</h1>
 
     <div class="card">🌡 {last.temp:.2f} °C</div>
     <div class="card">💧 {last.hum:.2f} %</div>
