@@ -40,12 +40,26 @@ conn.close()
 
 # ===== DECODE =====
 def decode(hexdata):
+    # garder seulement payload Arduino 16 bytes
+    if len(hexdata) != 32:
+        return None
+
     try:
-        t = int(hexdata[0:4],16)/100
-        h = int(hexdata[4:8],16)/100
-        p = int(hexdata[8:12],16)/10
-        l = int(hexdata[12:20],16)
-        return t,h,p,l
+        temp_raw = int(hexdata[0:4],16)
+        hum_raw  = int(hexdata[4:8],16)
+        pres_raw = int(hexdata[8:12],16)
+        lux_raw  = int(hexdata[12:20],16)
+
+        temp = temp_raw/100
+        hum  = hum_raw/100
+        pres = pres_raw/10
+        lux  = lux_raw
+
+        # filtre valeurs impossibles
+        if temp>80 or hum>100 or pres<800 or pres>1200:
+            return None
+
+        return temp,hum,pres,lux
     except:
         return None
 
