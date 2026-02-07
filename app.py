@@ -203,7 +203,6 @@ def login():
     </html>
     """
 
-
 # ================= DASHBOARD =================
 @app.route("/dashboard")
 def dashboard():
@@ -213,9 +212,7 @@ def dashboard():
 
     try:
         conn = db()
-        df = pd.read_sql_query(
-            "SELECT * FROM data ORDER BY date DESC LIMIT 2000", conn
-        )
+        df = pd.read_sql_query("SELECT * FROM data", conn)
         conn.close()
     except Exception as e:
         return f"<h2 style='color:red'>DB error: {e}</h2>"
@@ -232,7 +229,6 @@ def dashboard():
         <body>
         <h1>🛰️ ECOLOGGING - INRAe</h1>
         <h2>Connexion satellite en cours...</h2>
-        <p>Les données arrivent depuis CLS...</p>
         </body>
         </html>
         """
@@ -241,21 +237,29 @@ def dashboard():
         df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date")
 
+        # 🔵 FILTRE 24H SEULEMENT
+        now = pd.Timestamp.utcnow()
+        last24 = now - pd.Timedelta(hours=24)
+        df = df[df["date"] >= last24]
+
+        if len(df)==0:
+            return "<h2 style='color:white;text-align:center'>Pas encore de données 24h</h2>"
+
         # ===== 4 GRAPHES =====
         fig = make_subplots(
             rows=2, cols=2,
             subplot_titles=("Température °C","Humidité %","Pression hPa","Luminosité lux")
         )
 
-        fig.add_trace(go.Scatter(x=df["date"], y=df["temp"], name="Temp °C"), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["hum"], name="Hum %"), row=1, col=2)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["press"], name="Press hPa"), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["lux"], name="Lux"), row=2, col=2)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["temp"]), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["hum"]), row=1, col=2)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["press"]), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["lux"]), row=2, col=2)
 
         fig.update_layout(
             template="plotly_dark",
             height=700,
-            title=f"ECOLOGGING Station — ID: {DEVICE}",
+            title=f"Temps réel + dernières 24h — Device {DEVICE}",
             showlegend=False
         )
 
@@ -271,7 +275,7 @@ def dashboard():
     <meta http-equiv='refresh' content='30'>
     <style>
     body{{background:#020617;color:white;text-align:center;font-family:Arial}}
-    .card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px}}
+    .card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px;font-size:22px}}
     h1{{color:#00ffe1}}
     </style>
     </head>
@@ -279,7 +283,7 @@ def dashboard():
     <body>
 
     <h1>🛰️ ECOLOGGING - INRAe</h1>
-    <h3>Device : {DEVICE}</h3>
+    <h3>Temps réel + dernières 24h</h3>
 
     <div class="card">🌡 {last.temp:.2f} °C</div>
     <div class="card">💧 {last.hum:.2f} %</div>
