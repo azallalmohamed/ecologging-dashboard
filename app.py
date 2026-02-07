@@ -13,7 +13,8 @@ CLS_USER = os.environ.get("CLS_USER")
 CLS_PASS = os.environ.get("CLS_PASS")
 
 AUTH_URL = "https://account.groupcls.com/auth/realms/cls/protocol/openid-connect/token"
-API_URL  = "https://api.groupcls.com/telemetry/api/v1/retrieve-realtime"
+# API_URL  = "https://api.groupcls.com/telemetry/api/v1/retrieve-realtime"
+API_URL  = "https://api.groupcls.com/telemetry/api/v1/retrieve-bulk"
 
 CLS_TOKEN = None
 CHECKPOINT = 0
@@ -68,7 +69,7 @@ def login_cls():
 
 # ===== GET DATA =====
 def get_data():
-    global CHECKPOINT
+    global CLS_TOKEN
 
     if not CLS_TOKEN:
         login_cls()
@@ -77,36 +78,39 @@ def get_data():
     headers = {"Authorization":"Bearer "+CLS_TOKEN}
 
     body = {
+        "pagination":{"first":50},
         "retrieveRawData":True,
+        "retrieveMetadata":True,
         "deviceRefs":[DEVICE],
-        "fromCheckpoint":CHECKPOINT,
+
+        # HISTORIQUE 30 JOURS
+        "fromDatetime":"2026-01-01T00:00:00.000Z",
+        "toDatetime":"2030-01-01T00:00:00.000Z",
         "datetimeFormat":"DATETIME"
     }
 
     r = requests.post(API_URL,json=body,headers=headers)
 
     if r.status_code != 200:
-        print("API error")
+        print("API error", r.text)
         return
 
     data = r.json()
 
-    if "checkpoint" in data:
-        CHECKPOINT = data["checkpoint"]
-
     if "contents" not in data:
+        print("no data")
         return
 
     for m in data["contents"]:
         hexdata = m.get("rawData","")
-        d = m.get("messageDatetime","")
+        d = m.get("msgDatetime","")
 
         dec = decode(hexdata)
         if not dec:
             continue
 
         t,h,p,l = dec
-        print("DATA",d,t,h,p,l)
+        print("HISTORIQUE:",d,t,h,p,l)
 
         try:
             conn = db()
@@ -118,6 +122,7 @@ def get_data():
             conn.close()
         except:
             pass
+
 
 # ===== LOOP =====
 def loop():
