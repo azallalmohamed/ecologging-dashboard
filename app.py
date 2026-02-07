@@ -6,7 +6,7 @@ import threading
 import traceback
 import pandas as pd
 import plotly.express as px
-from flask import Flask, request, redirect, session, jsonify
+from flask import Flask, request, redirect, session
 
 # ================= CONFIG =================
 DEVICE = "278910"
@@ -59,7 +59,7 @@ def decode(hexdata):
     except:
         return None
 
-# ================= LOGIN CLS =================
+# ================= LOGIN CLS DIRECT =================
 def login_cls(username,password):
     global CLS_TOKEN
 
@@ -85,6 +85,7 @@ def get_data():
     global CLS_TOKEN, LAST_FETCH
 
     if not CLS_TOKEN:
+        print("pas connecté CLS")
         return
 
     headers={"Authorization":"Bearer "+CLS_TOKEN}
@@ -104,6 +105,7 @@ def get_data():
     r=requests.post(API_URL,json=body,headers=headers)
 
     if r.status_code==401:
+        print("token expiré")
         CLS_TOKEN=None
         return
 
@@ -148,68 +150,58 @@ def loop():
 
 threading.Thread(target=loop,daemon=True).start()
 
-# ================= LOGIN PAGE =================
+# ================= PAGE LOGIN CLS =================
 @app.route("/", methods=["GET","POST"])
 def login():
 
-    error=""
+    error = ""
 
     if request.method=="POST":
         email=request.form.get("email")
         pwd=request.form.get("pwd")
 
         if not email or not pwd:
-            error="Enter email and password"
+            error = "Veuillez entrer email et mot de passe"
+
         else:
-            ok=login_cls(email,pwd)
+            ok = login_cls(email,pwd)
 
             if ok:
                 session["login"]=True
                 return redirect("/dashboard")
             else:
-                error="❌ CLS login incorrect"
+                error = "Email ou mot de passe CLS incorrect"
 
     return f"""
     <html>
     <head>
-    <title>ECOLOGGING LOGIN</title>
+    <title>ECOLOGGING - INRAe</title>
     <style>
     body{{background:#020617;color:white;text-align:center;font-family:Arial}}
     .box{{margin-top:120px}}
     input{{padding:14px;margin:10px;width:280px;border-radius:10px;border:none}}
-    button{{padding:14px 40px;background:#00ffe1;border:none;border-radius:12px}}
-    .error{{color:red;font-size:18px}}
+    button{{padding:14px 40px;background:#00ffe1;border:none;border-radius:12px;font-size:16px}}
+    .error{{color:#ff4d4d;font-size:18px;margin-top:10px}}
     </style>
     </head>
+
     <body>
     <div class="box">
-    <h1>🛰️ ECOLOGGING SECURE</h1>
+    <h1>🛰️ ECOLOGGING - INRAe</h1>
+    <h3>Connexion satellite CLS</h3>
+
     <form method="post">
-    <input name="email" placeholder="CLS email"><br>
-    <input name="pwd" type="password" placeholder="CLS password"><br>
+    <input name="email" placeholder="CLS Email"><br>
+    <input name="pwd" type="password" placeholder="CLS Password"><br>
     <button>Connexion</button>
     </form>
+
     <div class="error">{error}</div>
     </div>
     </body>
     </html>
     """
 
-# ================= LOGOUT =================
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/")
-
-# ================= API DATA (AJAX) =================
-@app.route("/api/data")
-def api_data():
-
-    conn=db()
-    df=pd.read_sql_query("SELECT * FROM data ORDER BY date ASC",conn)
-    conn.close()
-
-    return df.to_json(orient="records")
 
 # ================= DASHBOARD =================
 @app.route("/dashboard")
@@ -218,78 +210,81 @@ def dashboard():
     if not session.get("login"):
         return redirect("/")
 
-    return f"""
+    try:
+        conn = db()
+        df = pd.read_sql_query(
+            "SELECT * FROM data ORDER BY date DESC LIMIT 2000", conn
+        )
+        conn.close()
+    except Exception as e:
+        return f"<h2 style='color:red'>DB error: {e}</h2>"
+
+    # ===== aucune donnée encore =====
+    if df is None or len(df) == 0:
+        return """
+        <html>
+        <head>
+        <meta http-equiv='refresh' content='10'>
+        <style>
+        body{background:#020617;color:white;text-align:center;font-family:Arial}
+        </style>
+        </head>
+        <body>
+        <h1>🛰️ ECOLOGGING - INRAe</h1>
+        <h2>Connexion satellite en cours...</h2>
+        <p>Les données arrivent depuis CLS...</p>
+        </body>
+        </html>
+        """
+
+    try:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date")
+
+        fig = px.line(
+            df,
+            x="date",
+            y=["temp","hum","press","lux"],
+            title=f"ECOLOGGING Station — ID: {DEVICE}",
+            template="plotly_dark"
+        )
+
+        graph = fig.to_html(full_html=False)
+
+        last = df.iloc[-1]
+
+    except Exception as e:
+        return f"<h2 style='color:red'>Plot error: {e}</h2>"
+
+    html = f"""
     <html>
     <head>
-    <title>ECOLOGGING - INRAe</title>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-
+    <meta http-equiv='refresh' content='30'>
     <style>
     body{{background:#020617;color:white;text-align:center;font-family:Arial}}
-    .top{{position:absolute;right:20px;top:20px}}
-    button{{padding:10px 20px;background:red;border:none;border-radius:8px;color:white}}
+    .card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px}}
+    h1{{color:#00ffe1}}
     </style>
     </head>
 
     <body>
 
-    <div class="top">
-    <a href="/logout"><button>Logout</button></a>
-    </div>
-
     <h1>🛰️ ECOLOGGING - INRAe</h1>
-    <h3>Device ID : {DEVICE}</h3>
+    <h3>Device : {DEVICE}</h3>
 
-    <div id="graph" style="width:95%;margin:auto;"></div>
+    <div class="card">🌡 {last.temp:.2f} °C</div>
+    <div class="card">💧 {last.hum:.2f} %</div>
+    <div class="card">📊 {last.press:.1f} hPa</div>
+    <div class="card">☀️ {last.lux}</div>
 
-<script>
-
-let firstLoad=true;
-let layoutSaved=null;
-
-async function loadData(){{
-
-    let r = await fetch('/api/data');
-    let data = await r.json();
-
-    if(data.length==0) return;
-
-    let dates=data.map(d=>d.date);
-
-    let temp=data.map(d=>d.temp);
-    let hum=data.map(d=>d.hum);
-    let press=data.map(d=>d.press);
-    let lux=data.map(d=>d.lux);
-
-    let traces=[
-        {{x:dates,y:temp,name:'Temp',type:'scatter'}},
-        {{x:dates,y:hum,name:'Hum',type:'scatter'}},
-        {{x:dates,y:press,name:'Press',type:'scatter'}},
-        {{x:dates,y:lux,name:'Lux',type:'scatter'}}
-    ];
-
-    if(firstLoad){{
-        Plotly.newPlot('graph',traces,{{template:'plotly_dark'}});
-        firstLoad=false;
-    }}else{{
-        Plotly.react('graph',traces,layoutSaved||{{template:'plotly_dark'}});
-    }}
-}}
-
-setInterval(loadData,15000);
-
-document.getElementById('graph')?.on('plotly_relayout', function(e){{
-    layoutSaved=e;
-}});
-
-loadData();
-
-</script>
+    {graph}
 
     </body>
     </html>
     """
-    
+
+    return html
+
 # ================= RUN =================
 port=int(os.environ.get("PORT",10000))
 app.run(host="0.0.0.0",port=port)
