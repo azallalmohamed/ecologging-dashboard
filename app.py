@@ -5,7 +5,8 @@ import time
 import threading
 import traceback
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from flask import Flask, request, redirect, session
 
 # ================= CONFIG =================
@@ -219,7 +220,6 @@ def dashboard():
     except Exception as e:
         return f"<h2 style='color:red'>DB error: {e}</h2>"
 
-    # ===== aucune donnée encore =====
     if df is None or len(df) == 0:
         return """
         <html>
@@ -241,16 +241,25 @@ def dashboard():
         df["date"] = pd.to_datetime(df["date"])
         df = df.sort_values("date")
 
-        fig = px.line(
-            df,
-            x="date",
-            y=["temp","hum","press","lux"],
+        # ===== 4 GRAPHES =====
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=("Température °C","Humidité %","Pression hPa","Luminosité lux")
+        )
+
+        fig.add_trace(go.Scatter(x=df["date"], y=df["temp"], name="Temp °C"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["hum"], name="Hum %"), row=1, col=2)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["press"], name="Press hPa"), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["lux"], name="Lux"), row=2, col=2)
+
+        fig.update_layout(
+            template="plotly_dark",
+            height=700,
             title=f"ECOLOGGING Station — ID: {DEVICE}",
-            template="plotly_dark"
+            showlegend=False
         )
 
         graph = fig.to_html(full_html=False)
-
         last = df.iloc[-1]
 
     except Exception as e:
