@@ -3,6 +3,7 @@ import requests
 import sqlite3
 import time
 import threading
+import traceback
 import pandas as pd
 import plotly.express as px
 from flask import Flask, request, redirect, session
@@ -135,8 +136,9 @@ def get_data():
             """,(d,t,h,p,l))
             conn.commit()
             conn.close()
-        except:
-            pass
+        except Exception as e:
+            print("DB error:", e)
+            traceback.print_exc()
 
         LAST_FETCH=d
 
@@ -208,24 +210,53 @@ def dashboard():
     if not session.get("login"):
         return redirect("/")
 
-    conn=db()
-    df=pd.read_sql_query("SELECT * FROM data ORDER BY date DESC LIMIT 2000",conn)
-    conn.close()
+    try:
+        conn = db()
+        df = pd.read_sql_query(
+            "SELECT * FROM data ORDER BY date DESC LIMIT 2000", conn
+        )
+        conn.close()
+    except Exception as e:
+        return f"<h2 style='color:red'>DB error: {e}</h2>"
 
-    if len(df)==0:
-        return "<h1 style='color:white'>Connexion satellite...</h1>"
+    # ===== aucune donnée encore =====
+    if df is None or len(df) == 0:
+        return """
+        <html>
+        <head>
+        <meta http-equiv='refresh' content='10'>
+        <style>
+        body{background:#020617;color:white;text-align:center;font-family:Arial}
+        </style>
+        </head>
+        <body>
+        <h1>🛰️ ECOLOGGING PRO</h1>
+        <h2>Connexion satellite en cours...</h2>
+        <p>Les données arrivent depuis CLS...</p>
+        </body>
+        </html>
+        """
 
-    df["date"]=pd.to_datetime(df["date"])
-    df=df.sort_values("date")
+    try:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date")
 
-    fig=px.line(df,x="date",y=["temp","hum","press","lux"],
-                title=f"ECOLOGGING Station — Device {DEVICE}",
-                template="plotly_dark")
+        fig = px.line(
+            df,
+            x="date",
+            y=["temp","hum","press","lux"],
+            title=f"ECOLOGGING Station — Device {DEVICE}",
+            template="plotly_dark"
+        )
 
-    graph=fig.to_html(full_html=False)
-    last=df.iloc[-1]
+        graph = fig.to_html(full_html=False)
 
-    html=f"""
+        last = df.iloc[-1]
+
+    except Exception as e:
+        return f"<h2 style='color:red'>Plot error: {e}</h2>"
+
+    html = f"""
     <html>
     <head>
     <meta http-equiv='refresh' content='30'>
@@ -251,6 +282,7 @@ def dashboard():
     </body>
     </html>
     """
+
     return html
 
 # ================= RUN =================
