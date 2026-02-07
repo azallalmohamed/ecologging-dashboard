@@ -276,7 +276,7 @@ def dashboard():
     html = f"""
     <html>
     <head>
-    <meta http-equiv='refresh' content='30'>
+    <meta http-equiv='refresh' content='600'>
     <style>
     body{{background:#020617;color:white;text-align:center;font-family:Arial}}
     .card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px;font-size:22px}}
