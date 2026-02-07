@@ -5,7 +5,9 @@ import time
 import threading
 import traceback
 import pandas as pd
-from flask import Flask, request, redirect, session, jsonify
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from flask import Flask, request, redirect, session
 
 # ================= CONFIG =================
 DEVICE = "278910"
@@ -40,8 +42,10 @@ conn.close()
 
 # ================= DECODE =================
 def decode(hexdata):
+
     if len(hexdata)!=32:
         return None
+
     try:
         temp=int(hexdata[0:4],16)/100
         hum=int(hexdata[4:8],16)/100
@@ -56,15 +60,17 @@ def decode(hexdata):
     except:
         return None
 
-# ================= LOGIN CLS =================
+# ================= LOGIN CLS DIRECT =================
 def login_cls(username,password):
     global CLS_TOKEN
+
     data={
         "grant_type":"password",
         "client_id":"api-telemetry",
         "username":username,
         "password":password
     }
+
     r=requests.post(AUTH_URL,data=data)
 
     if r.status_code==200:
@@ -80,9 +86,11 @@ def get_data():
     global CLS_TOKEN, LAST_FETCH
 
     if not CLS_TOKEN:
+        print("pas connecté CLS")
         return
 
     headers={"Authorization":"Bearer "+CLS_TOKEN}
+
     from_date = LAST_FETCH if LAST_FETCH else "2026-01-01T00:00:00.000Z"
 
     body={
@@ -95,13 +103,10 @@ def get_data():
         "datetimeFormat":"DATETIME"
     }
 
-    try:
-        r=requests.post(API_URL,json=body,headers=headers,timeout=20)
-    except:
-        print("CLS offline")
-        return
+    r=requests.post(API_URL,json=body,headers=headers)
 
     if r.status_code==401:
+        print("token expiré")
         CLS_TOKEN=None
         return
 
@@ -132,8 +137,9 @@ def get_data():
             """,(d,t,h,p,l))
             conn.commit()
             conn.close()
-        except:
-            pass
+        except Exception as e:
+            print("DB error:", e)
+            traceback.print_exc()
 
         LAST_FETCH=d
 
@@ -145,47 +151,58 @@ def loop():
 
 threading.Thread(target=loop,daemon=True).start()
 
-# ================= LOGIN PAGE =================
+# ================= PAGE LOGIN CLS =================
 @app.route("/", methods=["GET","POST"])
 def login():
 
-    error=""
+    error = ""
 
     if request.method=="POST":
         email=request.form.get("email")
         pwd=request.form.get("pwd")
 
-        ok=login_cls(email,pwd)
+        if not email or not pwd:
+            error = "Veuillez entrer email et mot de passe"
 
-        if ok:
-            session["login"]=True
-            return redirect("/dashboard")
         else:
-            error="Email ou mot de passe incorrect"
+            ok = login_cls(email,pwd)
+
+            if ok:
+                session["login"]=True
+                return redirect("/dashboard")
+            else:
+                error = "Email ou mot de passe CLS incorrect"
 
     return f"""
     <html>
-    <body style="background:#020617;color:white;text-align:center;font-family:Arial">
-    <h1>🛰️ ECOLOGGING LOGIN</h1>
+    <head>
+    <title>ECOLOGGING - INRAe</title>
+    <style>
+    body{{background:#020617;color:white;text-align:center;font-family:Arial}}
+    .box{{margin-top:120px}}
+    input{{padding:14px;margin:10px;width:280px;border-radius:10px;border:none}}
+    button{{padding:14px 40px;background:#00ffe1;border:none;border-radius:12px;font-size:16px}}
+    .error{{color:#ff4d4d;font-size:18px;margin-top:10px}}
+    </style>
+    </head>
+
+    <body>
+    <div class="box">
+    <h1>🛰️ ECOLOGGING - INRAe</h1>
+    <h3>Connexion satellite CLS</h3>
+
     <form method="post">
-    <input name="email" placeholder="CLS Email"><br><br>
-    <input name="pwd" type="password" placeholder="CLS Password"><br><br>
+    <input name="email" placeholder="CLS Email"><br>
+    <input name="pwd" type="password" placeholder="CLS Password"><br>
     <button>Connexion</button>
     </form>
-    <div style="color:red">{error}</div>
+
+    <div class="error">{error}</div>
+    </div>
     </body>
     </html>
     """
 
-# ================= API DATA LIVE =================
-@app.route("/api/data")
-def api_data():
-
-    conn=db()
-    df=pd.read_sql_query("SELECT * FROM data ORDER BY date ASC",conn)
-    conn.close()
-
-    return df.to_json(orient="records")
 
 # ================= DASHBOARD =================
 @app.route("/dashboard")
@@ -194,78 +211,88 @@ def dashboard():
     if not session.get("login"):
         return redirect("/")
 
-    return f"""
-<!DOCTYPE html>
-<html>
-<head>
-<title>ECOLOGGING PRO</title>
-<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    try:
+        conn = db()
+        df = pd.read_sql_query(
+            "SELECT * FROM data ORDER BY date DESC LIMIT 2000", conn
+        )
+        conn.close()
+    except Exception as e:
+        return f"<h2 style='color:red'>DB error: {e}</h2>"
 
-<style>
-body{{background:#020617;color:white;text-align:center;font-family:Arial}}
-.card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px}}
-button{{padding:10px 25px;background:red;color:white;border:none;border-radius:8px}}
-</style>
-</head>
+    if df is None or len(df) == 0:
+        return """
+        <html>
+        <head>
+        <meta http-equiv='refresh' content='10'>
+        <style>
+        body{background:#020617;color:white;text-align:center;font-family:Arial}
+        </style>
+        </head>
+        <body>
+        <h1>🛰️ ECOLOGGING - INRAe</h1>
+        <h2>Connexion satellite en cours...</h2>
+        <p>Les données arrivent depuis CLS...</p>
+        </body>
+        </html>
+        """
 
-<body>
+    try:
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.sort_values("date")
 
-<h1>🛰️ ECOLOGGING PRO LIVE</h1>
-<h3>Device {DEVICE}</h3>
+        # ===== 4 GRAPHES =====
+        fig = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=("Température °C","Humidité %","Pression hPa","Luminosité lux")
+        )
 
-<button onclick="window.location='/logout'">Déconnexion</button>
+        fig.add_trace(go.Scatter(x=df["date"], y=df["temp"], name="Temp °C"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["hum"], name="Hum %"), row=1, col=2)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["press"], name="Press hPa"), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df["date"], y=df["lux"], name="Lux"), row=2, col=2)
 
-<div id="graph" style="width:95%;height:75vh;margin:auto"></div>
+        fig.update_layout(
+            template="plotly_dark",
+            height=700,
+            title=f"ECOLOGGING Station — ID: {DEVICE}",
+            showlegend=False
+        )
 
-<script>
+        graph = fig.to_html(full_html=False)
+        last = df.iloc[-1]
 
-let layout={{
-    template:"plotly_dark",
-    title:"Station Live",
-    xaxis:{{title:"Date"}},
-    yaxis:{{title:"Valeurs"}}
-}};
+    except Exception as e:
+        return f"<h2 style='color:red'>Plot error: {e}</h2>"
 
-let config={{responsive:true}};
+    html = f"""
+    <html>
+    <head>
+    <meta http-equiv='refresh' content='30'>
+    <style>
+    body{{background:#020617;color:white;text-align:center;font-family:Arial}}
+    .card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px}}
+    h1{{color:#00ffe1}}
+    </style>
+    </head>
 
-function load(){{
-fetch("/api/data")
-.then(r=>r.json())
-.then(data=>{{
+    <body>
 
-let x=data.map(d=>d.date);
+    <h1>🛰️ ECOLOGGING - INRAe</h1>
+    <h3>Device : {DEVICE}</h3>
 
-let temp=data.map(d=>d.temp);
-let hum=data.map(d=>d.hum);
-let press=data.map(d=>d.press);
-let lux=data.map(d=>d.lux);
+    <div class="card">🌡 {last.temp:.2f} °C</div>
+    <div class="card">💧 {last.hum:.2f} %</div>
+    <div class="card">📊 {last.press:.1f} hPa</div>
+    <div class="card">☀️ {last.lux}</div>
 
-let traces=[
-{{x:x,y:temp,name:"Temp °C"}},
-{{x:x,y:hum,name:"Hum %"}},
-{{x:x,y:press,name:"Press"}},
-{{x:x,y:lux,name:"Lux"}}
-];
+    {graph}
 
-Plotly.react("graph",traces,layout,config);
+    </body>
+    </html>
+    """
 
-}});
-}}
-
-load();
-setInterval(load,15000);
-
-</script>
-
-</body>
-</html>
-"""
-
-# ================= LOGOUT =================
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/")
+    return html
 
 # ================= RUN =================
 port=int(os.environ.get("PORT",10000))
