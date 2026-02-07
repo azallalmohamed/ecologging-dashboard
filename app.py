@@ -5,25 +5,26 @@ import time
 import threading
 import pandas as pd
 import plotly.express as px
-from flask import Flask
+from flask import Flask, request, redirect, session
 
 # ================= CONFIG =================
 DEVICE = "278910"
-CLS_USER = os.environ.get("CLS_USER")
-CLS_PASS = os.environ.get("CLS_PASS")
 
 AUTH_URL = "https://account.groupcls.com/auth/realms/cls/protocol/openid-connect/token"
 API_URL  = "https://api.groupcls.com/telemetry/api/v1/retrieve-bulk"
 
 CLS_TOKEN = None
-LAST_FETCH = None   # pour récupérer seulement nouvelles data
+LAST_FETCH = None
+
+app = Flask(__name__)
+app.secret_key = "eco_super_secret"
 
 # ================= DATABASE =================
 def db():
     return sqlite3.connect("database.db", check_same_thread=False)
 
-conn = db()
-cur = conn.cursor()
+conn=db()
+cur=conn.cursor()
 cur.execute("""
 CREATE TABLE IF NOT EXISTS data(
 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,75 +38,60 @@ lux REAL
 conn.commit()
 conn.close()
 
-# ================= DECODE PAYLOAD ARDUINO =================
+# ================= DECODE =================
 def decode(hexdata):
 
-    # payload Arduino = 32 hex (16 bytes)
-    if len(hexdata) != 32:
+    if len(hexdata)!=32:
         return None
 
     try:
-        temp_raw = int(hexdata[0:4],16)
-        hum_raw  = int(hexdata[4:8],16)
-        pres_raw = int(hexdata[8:12],16)
-        lux_raw  = int(hexdata[12:20],16)
+        temp=int(hexdata[0:4],16)/100
+        hum=int(hexdata[4:8],16)/100
+        pres=int(hexdata[8:12],16)/10
+        lux=int(hexdata[12:20],16)
 
-        temp = temp_raw/100
-        hum  = hum_raw/100
-        pres = pres_raw/10
-        lux  = lux_raw
-
-        # filtre valeurs parasites
-        if temp < -40 or temp > 80: return None
-        if hum < 0 or hum > 100: return None
-        if pres < 800 or pres > 1200: return None
-        if lux > 200000: return None
+        if temp<-40 or temp>80: return None
+        if hum<0 or hum>100: return None
+        if pres<800 or pres>1200: return None
 
         return temp,hum,pres,lux
     except:
         return None
 
-# ================= LOGIN CLS =================
-def login_cls():
+# ================= LOGIN CLS DIRECT =================
+def login_cls(username,password):
     global CLS_TOKEN
 
-    if not CLS_USER or not CLS_PASS:
-        print("❌ CLS_USER ou CLS_PASS manquant dans Render")
-        return
-
-    data = {
+    data={
         "grant_type":"password",
         "client_id":"api-telemetry",
-        "username":CLS_USER,
-        "password":CLS_PASS
+        "username":username,
+        "password":password
     }
 
-    r = requests.post(AUTH_URL,data=data)
+    r=requests.post(AUTH_URL,data=data)
 
-    if r.status_code == 200:
-        CLS_TOKEN = r.json()["access_token"]
+    if r.status_code==200:
+        CLS_TOKEN=r.json()["access_token"]
         print("🟢 CLS connecté")
+        return True
     else:
-        print("❌ Erreur login CLS :", r.text)
-        CLS_TOKEN = None
+        print("❌ CLS login fail")
+        return False
 
-# ================= GET DATA CLS =================
+# ================= GET DATA =================
 def get_data():
     global CLS_TOKEN, LAST_FETCH
 
     if not CLS_TOKEN:
-        login_cls()
+        print("pas connecté CLS")
         return
 
-    headers = {"Authorization":"Bearer "+CLS_TOKEN}
+    headers={"Authorization":"Bearer "+CLS_TOKEN}
 
-    # récupérer seulement nouvelles données
-    if LAST_FETCH:
-        from_date = LAST_FETCH
-    else:
-        from_date = "2026-01-01T00:00:00.000Z"
+    from_date = LAST_FETCH if LAST_FETCH else "2026-01-01T00:00:00.000Z"
 
-    body = {
+    body={
         "pagination":{"first":50},
         "retrieveRawData":True,
         "retrieveMetadata":True,
@@ -115,41 +101,34 @@ def get_data():
         "datetimeFormat":"DATETIME"
     }
 
-    try:
-        r = requests.post(API_URL,json=body,headers=headers,timeout=20)
-    except:
-        print("⚠️ réseau CLS off")
+    r=requests.post(API_URL,json=body,headers=headers)
+
+    if r.status_code==401:
+        print("token expiré")
+        CLS_TOKEN=None
         return
 
-    if r.status_code == 401:
-        print("🔄 Token expiré → relogin")
-        CLS_TOKEN = None
+    if r.status_code!=200:
+        print("API error",r.text)
         return
 
-    if r.status_code != 200:
-        print("❌ API CLS:", r.text)
-        return
-
-    data = r.json()
-
+    data=r.json()
     if "contents" not in data:
-        print("...pas nouvelles data")
         return
 
     for m in data["contents"]:
-        hexdata = m.get("rawData","")
-        d = m.get("msgDatetime","")
+        hexdata=m.get("rawData","")
+        d=m.get("msgDatetime","")
 
-        decoded = decode(hexdata)
-        if not decoded:
-            continue
+        dec=decode(hexdata)
+        if not dec: continue
 
-        t,h,p,l = decoded
-        print("📡",d,"T:",t,"H:",h,"P:",p,"L:",l)
+        t,h,p,l=dec
+        print("📡",d,t,h,p,l)
 
         try:
-            conn = db()
-            cur = conn.cursor()
+            conn=db()
+            cur=conn.cursor()
             cur.execute("""
             INSERT OR IGNORE INTO data(date,temp,hum,press,lux)
             VALUES(?,?,?,?,?)
@@ -159,71 +138,98 @@ def get_data():
         except:
             pass
 
-        LAST_FETCH = d  # mémorise dernière data
+        LAST_FETCH=d
 
-# ================= THREAD LOOP =================
+# ================= THREAD =================
 def loop():
     while True:
         get_data()
-        time.sleep(60)   # CLS recommande ≥60s
+        time.sleep(60)
 
 threading.Thread(target=loop,daemon=True).start()
 
-# ================= FLASK =================
-app = Flask(__name__)
+# ================= PAGE LOGIN CLS =================
+@app.route("/", methods=["GET","POST"])
+def login():
 
-@app.route("/")
-def home():
+    if request.method=="POST":
+        email=request.form.get("email")
+        pwd=request.form.get("pwd")
 
-    conn = db()
-    df = pd.read_sql_query("SELECT * FROM data ORDER BY date DESC LIMIT 2000", conn)
+        ok=login_cls(email,pwd)
+
+        if ok:
+            session["login"]=True
+            return redirect("/dashboard")
+        else:
+            return "<h2 style='color:red'>Erreur connexion CLS</h2>"
+
+    return """
+    <html>
+    <head>
+    <title>ECOLOGGING Secure</title>
+    <style>
+    body{background:#020617;color:white;text-align:center;font-family:Arial}
+    input{padding:12px;margin:8px;width:260px;border-radius:10px;border:none}
+    button{padding:12px 40px;background:#00ffe1;border:none;border-radius:10px}
+    </style>
+    </head>
+    <body>
+    <h1>🛰️ ECOLOGGING SECURE ACCESS</h1>
+    <h3>Connexion satellite CLS</h3>
+    <form method="post">
+    <input name="email" placeholder="CLS Email"><br>
+    <input name="pwd" type="password" placeholder="CLS Password"><br>
+    <button>Connexion sécurisée</button>
+    </form>
+    </body>
+    </html>
+    """
+
+# ================= DASHBOARD =================
+@app.route("/dashboard")
+def dashboard():
+
+    if not session.get("login"):
+        return redirect("/")
+
+    conn=db()
+    df=pd.read_sql_query("SELECT * FROM data ORDER BY date DESC LIMIT 2000",conn)
     conn.close()
 
     if len(df)==0:
-        return """
-        <html>
-        <body style="background:black;color:white;text-align:center;font-family:Arial">
-        <h1>🛰️ ECOLOGGING</h1>
-        <h2>Connexion satellite en cours...</h2>
-        </body></html>
-        """
+        return "<h1 style='color:white'>Connexion satellite...</h1>"
 
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date")
+    df["date"]=pd.to_datetime(df["date"])
+    df=df.sort_values("date")
 
-    # graphique pro
-    fig = px.line(
-        df,
-        x="date",
-        y=["temp","hum","press","lux"],
-        title="ECOLOGGING Satellite Station — 30 jours",
-        template="plotly_dark"
-    )
+    fig=px.line(df,x="date",y=["temp","hum","press","lux"],
+                title=f"ECOLOGGING Station — Device {DEVICE}",
+                template="plotly_dark")
 
-    graph = fig.to_html(full_html=False)
+    graph=fig.to_html(full_html=False)
+    last=df.iloc[-1]
 
-    last = df.iloc[-1]
-
-    html = f"""
+    html=f"""
     <html>
     <head>
     <meta http-equiv='refresh' content='30'>
-    <title>ECOLOGGING Satellite</title>
     <style>
     body{{background:#020617;color:white;text-align:center;font-family:Arial}}
-    h1{{color:#00ffe1}}
     .card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px}}
+    h1{{color:#00ffe1}}
     </style>
     </head>
 
     <body>
 
-    <h1>🛰️ ECOLOGGING Satellite Station</h1>
+    <h1>🛰️ ECOLOGGING PRO</h1>
+    <h3>Device : {DEVICE}</h3>
 
-    <div class="card">🌡 Temp<br><h2>{last.temp:.2f} °C</h2></div>
-    <div class="card">💧 Humidité<br><h2>{last.hum:.2f} %</h2></div>
-    <div class="card">📊 Pression<br><h2>{last.press:.1f} hPa</h2></div>
-    <div class="card">☀️ Lux<br><h2>{last.lux}</h2></div>
+    <div class="card">🌡 {last.temp:.2f} °C</div>
+    <div class="card">💧 {last.hum:.2f} %</div>
+    <div class="card">📊 {last.press:.1f} hPa</div>
+    <div class="card">☀️ {last.lux}</div>
 
     {graph}
 
@@ -232,6 +238,6 @@ def home():
     """
     return html
 
-# Render port
-port = int(os.environ.get("PORT",10000))
+# ================= RUN =================
+port=int(os.environ.get("PORT",10000))
 app.run(host="0.0.0.0",port=port)
