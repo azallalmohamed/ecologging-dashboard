@@ -215,63 +215,120 @@ def dashboard():
         df = pd.read_sql_query("SELECT * FROM data", conn)
         conn.close()
     except Exception as e:
-        return f"<h2 style='color:red'>DB error: {e}</h2>"
+        return f"""
+        <html>
+        <head>
+        <style>
+        body{{background:#020617;color:white;text-align:center;font-family:Arial;padding-top:100px}}
+        h2{{color:#ff4d4d}}
+        </style>
+        </head>
+        <body>
+        <h1>🛰️ ECOLOGGING - INRAe</h1>
+        <h2>Erreur de base de données: {e}</h2>
+        </body>
+        </html>
+        """
 
+    # Vérification si aucune donnée du tout
     if df is None or len(df) == 0:
         return """
         <html>
         <head>
         <meta http-equiv='refresh' content='10'>
         <style>
-        body{background:#020617;color:white;text-align:center;font-family:Arial}
+        body{background:#020617;color:white;text-align:center;font-family:Arial;padding-top:100px}
+        h2{color:#00ffe1}
         </style>
         </head>
         <body>
         <h1>🛰️ ECOLOGGING - INRAe</h1>
-        <h2>Connexion satellite en cours...</h2>
+        <h2>⏳ Connexion satellite en cours...</h2>
+        <p>En attente des premières données...</p>
         </body>
         </html>
         """
 
     try:
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date")
-
-       # convertir date sans timezone
+        # Conversion des dates
         df["date"] = pd.to_datetime(df["date"]).dt.tz_localize(None)
+        df = df.sort_values("date")
         
-        now = pd.Timestamp.now()   # locale simple
+        # Filtrage dernières 24h
+        now = pd.Timestamp.now()
         last24 = now - pd.Timedelta(hours=24)
-        
-        df = df[df["date"] >= last24]
+        df_24h = df[df["date"] >= last24]
 
+        # Si pas de données dans les dernières 24h, afficher un message
+        if len(df_24h) == 0:
+            last_data = df.iloc[-1]
+            last_date = last_data["date"]
+            
+            return f"""
+            <html>
+            <head>
+            <meta http-equiv='refresh' content='60'>
+            <style>
+            body{{background:#020617;color:white;text-align:center;font-family:Arial;padding-top:80px}}
+            h2{{color:#ffa500}}
+            .info{{color:#00ffe1;font-size:18px;margin-top:30px}}
+            .card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px;font-size:22px}}
+            </style>
+            </head>
+            <body>
+            <h1>🛰️ ECOLOGGING - INRAe</h1>
+            <h2>⚠️ Pas de données récentes (24h)</h2>
+            <p class="info">Dernière mesure reçue : {last_date.strftime("%d/%m/%Y à %H:%M:%S")}</p>
+            
+            <h3>Dernières valeurs enregistrées :</h3>
+            <div class="card">🌡 {last_data.temp:.2f} °C</div>
+            <div class="card">💧 {last_data.hum:.2f} %</div>
+            <div class="card">📊 {last_data.press:.1f} hPa</div>
+            <div class="card">☀️ {last_data.lux:.0f} lux</div>
+            
+            <p style="margin-top:40px;color:#888">Page actualisée automatiquement toutes les 60 secondes</p>
+            </body>
+            </html>
+            """
 
-        if len(df)==0:
-            return "<h2 style='color:white;text-align:center'>Pas encore de données 24h</h2>"
-
-        # ===== 4 GRAPHES =====
+        # Si on a des données dans les 24h, afficher les graphes normalement
         fig = make_subplots(
             rows=2, cols=2,
             subplot_titles=("Température °C","Humidité %","Pression hPa","Luminosité lux")
         )
 
-        fig.add_trace(go.Scatter(x=df["date"], y=df["temp"]), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["hum"]), row=1, col=2)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["press"]), row=2, col=1)
-        fig.add_trace(go.Scatter(x=df["date"], y=df["lux"]), row=2, col=2)
+        fig.add_trace(go.Scatter(x=df_24h["date"], y=df_24h["temp"], mode='lines+markers'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_24h["date"], y=df_24h["hum"], mode='lines+markers'), row=1, col=2)
+        fig.add_trace(go.Scatter(x=df_24h["date"], y=df_24h["press"], mode='lines+markers'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df_24h["date"], y=df_24h["lux"], mode='lines+markers'), row=2, col=2)
 
         fig.update_layout(
             template="plotly_dark",
             height=700,
-            title=f"ECOLOGGING Station — ID: {DEVICE}",
+            title=f"ECOLOGGING Station — ID: {DEVICE} — Dernières 24h",
             showlegend=False
         )
 
         graph = fig.to_html(full_html=False)
-        last = df.iloc[-1]
+        last = df_24h.iloc[-1]
 
     except Exception as e:
-        return f"<h2 style='color:red'>Plot error: {e}</h2>"
+        return f"""
+        <html>
+        <head>
+        <style>
+        body{{background:#020617;color:white;text-align:center;font-family:Arial;padding-top:100px}}
+        h2{{color:#ff4d4d}}
+        pre{{text-align:left;background:#111;padding:20px;margin:20px auto;max-width:800px;overflow:auto}}
+        </style>
+        </head>
+        <body>
+        <h1>🛰️ ECOLOGGING - INRAe</h1>
+        <h2>Erreur lors du traitement des données</h2>
+        <pre>{traceback.format_exc()}</pre>
+        </body>
+        </html>
+        """
 
     html = f"""
     <html>
@@ -281,19 +338,23 @@ def dashboard():
     body{{background:#020617;color:white;text-align:center;font-family:Arial}}
     .card{{display:inline-block;background:#111;padding:20px;margin:10px;border-radius:14px;font-size:22px}}
     h1{{color:#00ffe1}}
+    .timestamp{{color:#888;font-size:14px;margin-top:10px}}
     </style>
     </head>
 
     <body>
 
     <h1>🛰️ ECOLOGGING Station - INRAe</h1>
+    <p class="timestamp">Dernière mesure : {last.date.strftime("%d/%m/%Y à %H:%M:%S")}</p>
 
     <div class="card">🌡 {last.temp:.2f} °C</div>
     <div class="card">💧 {last.hum:.2f} %</div>
     <div class="card">📊 {last.press:.1f} hPa</div>
-    <div class="card">☀️ {last.lux}</div>
+    <div class="card">☀️ {last.lux:.0f} lux</div>
 
     {graph}
+
+    <p style="color:#888;margin-top:20px;font-size:14px">Page actualisée automatiquement toutes les 10 minutes</p>
 
     </body>
     </html>
